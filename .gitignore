@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Reproducible generated output (run generate_terrain.py / generate_world.py to regenerate)
+output/
+data/generated_nodes.csv
+data/generated_edges.csv
+data/generated_od_matrix.csv
+data/od_matrix.csv
