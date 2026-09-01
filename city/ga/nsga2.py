@@ -208,7 +208,6 @@ class NSGA2:
         self.stop_distances = stop_distances
         self.demand = demand
         self.rng = np.random.default_rng(seed)
-        self._hv_rng = np.random.default_rng(seed + 1)
 
         self.population_size = config.GA_POPULATION
         self.generations = config.GA_GENERATIONS
@@ -248,26 +247,47 @@ class NSGA2:
     def _evaluate_all(self, chromosomes: list[Chromosome]) -> np.ndarray:
         return np.array([self._evaluate(c) for c in chromosomes])
 
-    def _hypervolume(self, front_objectives: np.ndarray, n_samples: int = 10_000) -> float:
-        """Monte Carlo estimate of the 3D hypervolume dominated by
-        `front_objectives` relative to self.reference_point: fraction of
-        points sampled uniformly in the box [0, reference_point] that
-        some front point dominates, times the box volume. Simple and
-        exact in expectation; chosen over an exact slicing algorithm
-        since the spec allows an approximation and this is a few lines
-        instead of a recursive dimension-sweep."""
+    def _hypervolume(self, front_objectives: np.ndarray) -> float:
+        """Exact 3D hypervolume of `front_objectives` dominated relative
+        to self.reference_point, as a fraction of the unit cube.
+        Objectives are first normalised by the reference point (removing
+        the ~10^6/10^4/10^3 scale disparity between user cost, operator
+        cost and unserved demand), then swept by the standard slicing
+        method: sort by the third normalised objective, and at each
+        slice accumulate the 2D area dominated in the first two
+        objectives so far. Exact rather than sampled - fronts here are
+        at most GA_POPULATION points, so this is milliseconds."""
         ref = self.reference_point
-        if front_objectives.size == 0 or ref is None:
+        if front_objectives.size == 0 or ref is None or np.any(ref <= 0):
             return 0.0
-        box_volume = float(np.prod(ref))
-        if box_volume <= 0:
-            return 0.0
-        samples = self._hv_rng.uniform(low=0.0, high=ref, size=(n_samples, len(ref)))
-        dominated = np.any(
-            np.all(front_objectives[:, np.newaxis, :] <= samples[np.newaxis, :, :], axis=2),
-            axis=0,
-        )
-        return box_volume * float(dominated.mean())
+        normalised = np.minimum(front_objectives / ref, 1.0)
+
+        def area_2d(points: list[tuple[float, float]]) -> float:
+            """Area of the union of [x, 1] x [y, 1] boxes over `points`."""
+            skyline: list[tuple[float, float]] = []
+            min_y = np.inf
+            for x, y in sorted(points):
+                if y < min_y:
+                    skyline.append((x, y))
+                    min_y = y
+            area = 0.0
+            for i, (x, y) in enumerate(skyline):
+                next_x = skyline[i + 1][0] if i + 1 < len(skyline) else 1.0
+                area += (next_x - x) * (1.0 - y)
+            return area
+
+        order = np.argsort(normalised[:, 2])
+        sorted_points = normalised[order]
+
+        volume = 0.0
+        active_xy: list[tuple[float, float]] = []
+        for i, (x, y, z) in enumerate(sorted_points):
+            active_xy.append((float(x), float(y)))
+            next_z = sorted_points[i + 1, 2] if i + 1 < len(sorted_points) else 1.0
+            width = next_z - z
+            if width > 0:
+                volume += width * area_2d(active_xy)
+        return volume
 
     def _select_next_generation(
         self, population: list[Chromosome], objectives: np.ndarray

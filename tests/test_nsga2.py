@@ -181,6 +181,24 @@ def test_elitism_best_objectives_never_worsen(tiny_ga_config):
         )
 
 
+def test_hypervolume_never_decreases(tiny_ga_config):
+    # NSGA-II is elitist, so the first front's exact hypervolume can
+    # never shrink generation over generation - this is the exact
+    # invariant the old Monte Carlo estimator violated (sampling noise
+    # made the series go up and down, which is mathematically
+    # impossible for an elitist algorithm).
+    pool = _tiny_pool()
+    stop_distances = _linear_stops(8, 5.0)
+    demand = _tiny_demand()
+
+    result = NSGA2(pool, stop_distances, demand, seed=9).run()
+
+    deltas = np.diff(result.hypervolume_history)
+    assert np.all(deltas >= -1e-9), (
+        f"hypervolume decreased at some generation: {result.hypervolume_history}"
+    )
+
+
 def test_cache_hit_avoids_second_simulation_run(tiny_ga_config):
     pool = _tiny_pool()
     stop_distances = _linear_stops(8, 5.0)

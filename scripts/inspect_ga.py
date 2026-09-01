@@ -150,10 +150,13 @@ def main() -> None:
     print(f"  reference point (user/op/unserved): {tuple(round(v, 2) for v in result.reference_point)}")
 
     print("-" * 60)
-    print(f"Hypervolume per generation (every {HYPERVOLUME_STRIDE}th, index 0 = initial population):")
+    print(
+        f"Exact hypervolume per generation (fraction of the normalised unit "
+        f"cube, every {HYPERVOLUME_STRIDE}th, index 0 = initial population):"
+    )
     for gen, hv in enumerate(result.hypervolume_history):
         if gen % HYPERVOLUME_STRIDE == 0 or gen == len(result.hypervolume_history) - 1:
-            print(f"  gen {gen:>4}: {hv:,.2f}")
+            print(f"  gen {gen:>4}: {hv:.6f}")
 
     tail = result.hypervolume_history[-min(HYPERVOLUME_STRIDE, len(result.hypervolume_history)):]
     if len(tail) >= 2 and tail[0] > 0:
