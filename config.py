@@ -342,58 +342,35 @@ ROUTE_MAX_LENGTH: float = 200.0
 # --------------------------------------------------------------------------
 
 SIM_TIME_STEP_MINUTES: float = 1.0
-# Discretisation step. Small relative to DWELL_MINUTES_PER_STOP (0.5) and
-# typical inter-stop travel time so bus movement/dwell resolve cleanly.
+# Uniform demand is approximated by midpoint batches. Vehicle events are resolved
+# chronologically at exact travel/dwell times; time-step sensitivity is measured.
 
 SIM_DURATION_MINUTES: float = 180.0
-# A 3-hour peak period.
+# Fixed observation horizon. All queued/onboard passengers count as incomplete.
 
 BUS_SPEED_CELLS_PER_MINUTE: float = 1.0
-# Matches ROAD_SEGMENT_LENGTH's cell units; buses move at 1 cell/minute
-# of simulated time, no traffic/congestion modelling.
+# Synthetic cell units; no congestion or real geographic calibration.
 
 DWELL_MINUTES_PER_STOP: float = 0.5
-# Time a bus spends at each stop for alighting/boarding, regardless of
-# how many passengers actually board.
+# Boarding occurs on arrival, then this dwell elapses before departure.
 
 BUS_CAPACITY: int = 50
-# Passengers a single bus can carry at once - a generic single-unit bus,
-# not calibrated to any real vehicle.
+# Fluid passenger capacity of a generic vehicle.
 
 MAX_TRANSFERS: int = 2
-# A passenger needing more than this many transfers to reach their
-# destination is counted unserved rather than simulated indefinitely.
-
-# --------------------------------------------------------------------------
-# Genetic algorithm (NSGA-II route selection)
-# --------------------------------------------------------------------------
+# Maximum permitted route changes. Unreachable trips remain queued.
 
 GA_POPULATION: int = 50
-# Chromosomes per generation.
-
 GA_GENERATIONS: int = 100
-# Generations to evolve.
-
 GA_ROUTES_PER_SOLUTION: int = 20
-# Routes per chromosome. Measured (inspect_routes.py reachability audit):
-# 8 routes reach 32% of demand, 20 reach 86%, 40 reach 98%. Eight routes
-# can't form a real network to trade off; twenty leaves genuine
-# trade-offs between coverage, user cost, and operator cost for the GA
-# to search, without approaching the near-total coverage of forty where
-# there's little left to optimise.
+# Fixed route count for fair comparisons; experiment JSON can override budgets.
 
 GA_MUTATION_RATE: float = 0.2
-# Probability a child chromosome has one route swapped for a random
-# unused pool route.
+# Probability of replacing one route index with an unused pool index.
 
 GA_TRANSFER_PENALTY_MINUTES: float = 5.0
-# Minutes of equivalent user cost charged per transfer, so the user-cost
-# objective doesn't treat a transfer as free just because it isn't wait
-# or travel time on its own.
+# Passenger-minute equivalent penalty per route change.
 
 GA_FIXED_FREQUENCY: float = 8.0
-# Buses/hour for every route in every chromosome. The inspect_sim.py
-# frequency sweep (4/8/16/32) showed served% and wait/created barely
-# move across that whole range with a fixed route set - frequency isn't
-# the lever here, route selection is - so it's fixed instead of
-# optimised, at a representative mid-sweep value.
+# Scheduled departures/hour from EACH terminus. Vehicles make one one-way trip
+# and retire; vehicle reuse, deadheading and driver scheduling are out of scope.

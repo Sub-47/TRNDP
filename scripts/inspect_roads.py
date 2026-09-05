@@ -23,14 +23,10 @@ import numpy as np
 from scipy.ndimage import distance_transform_edt
 
 import config
-from city.generators.population_generator import PopulationGenerator
+from city.pipeline import build_roads
 from city.managers.map_manager import MapManager
 from city.models.world import World
 from city.renderers.terrain_renderer import _build_colormap
-from city.roads.connector import connect_components
-from city.roads.graph_builder import RoadGraphBuilder
-from city.roads.loop_closer import close_loops
-from city.roads.segment_grower import RoadNetworkGrower
 from city.roads.stop_selector import StopSelector
 
 COVERAGE_RADII = (2, 4, 8, 16)
@@ -148,24 +144,9 @@ def main() -> None:
     obstacle = world.obstacle.data
     world_size = population.shape[0]
 
-    # PopulationGenerator already computed centres while producing
-    # world.population; re-run it here (same terrain/obstacle/seed, so
-    # deterministically identical output) just to reach its exposed
-    # `.centres` attribute, which World's pipeline otherwise discards.
-    population_generator = PopulationGenerator(
-        terrain_classes=world.terrain.data,
-        obstacle_mask=world.obstacle.data,
-        world_size=world_size,
-        seed=config.SEED,
-    )
-    population_generator.run()
-    starts = [(float(col), float(row)) for row, col in population_generator.centres]
-
-    grower = RoadNetworkGrower(population, obstacle, starts)
-    segments = grower.grow()
-
-    builder = RoadGraphBuilder(segments)
-    graph = builder.build()
+    stages=build_roads(world)
+    starts=stages.starts; grower=stages.grower; segments=stages.segments
+    graph=stages.grown_graph
 
     components = list(nx.connected_components(graph))
     num_nodes = graph.number_of_nodes()
@@ -174,24 +155,22 @@ def main() -> None:
 
     hit_cap = len(segments) >= config.ROAD_MAX_SEGMENTS
 
-    connectors = connect_components(graph, obstacle)
+    connectors = stages.connectors
     connector_length = sum(math.dist(p1, p2) for p1, p2 in connectors)
 
     all_segments = segments + connectors
-    final_builder = RoadGraphBuilder(all_segments)
-    final_graph = final_builder.build()
+    final_graph = stages.connected_graph
 
     final_components = list(nx.connected_components(final_graph))
     final_num_nodes = final_graph.number_of_nodes()
     final_largest = max((len(c) for c in final_components), default=0)
     final_largest_pct = 100.0 * final_largest / final_num_nodes if final_num_nodes else 0.0
 
-    loop_edges = close_loops(final_graph, obstacle)
+    loop_edges = stages.loops
     loop_length = sum(math.dist(p1, p2) for p1, p2 in loop_edges)
 
     looped_segments = all_segments + loop_edges
-    looped_builder = RoadGraphBuilder(looped_segments)
-    looped_graph = looped_builder.build()
+    looped_graph = stages.graph
 
     looped_components = list(nx.connected_components(looped_graph))
     looped_num_nodes = looped_graph.number_of_nodes()
@@ -281,7 +260,7 @@ def main() -> None:
         print(f"  within {radius:>2} cells of a road   : {coverage[radius]:.2f}%")
     print("-" * 60)
     print(f"obstacle crossings (0.25-unit walk) : {crossings} / {len(looped_segments)} segments")
-    print(f"dropped_segments (graph builder)    : {looped_builder.dropped_segments}")
+    print("Graph-builder discarded sub-edge counts are reported in the diagnostic log.")
     print("-" * 60)
     print("stops:")
     print(f"  stops selected                 : {len(stops)} / {selector.target_count} target")

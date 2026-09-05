@@ -14,96 +14,30 @@ from __future__ import annotations
 import os
 import statistics
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
 import config
-from city.demand.distance_matrix import DistanceMatrix
-from city.demand.gravity_model import GravityModel
-from city.demand.zone_map import ZoneMap
 from city.ga.nsga2 import NSGA2
-from city.generators.population_generator import PopulationGenerator
-from city.managers.map_manager import MapManager
-from city.models.world import World
-from city.roads.connector import connect_components
-from city.roads.graph_builder import RoadGraphBuilder
-from city.roads.loop_closer import close_loops
-from city.roads.segment_grower import RoadNetworkGrower
-from city.roads.stop_selector import StopSelector
-from city.routes.cluster import DemandClusterer, aggregate_stop_demand, assign_zones_to_stops, build_stop_distance_matrix
-from city.routes.route_pool import RoutePool
 from city.sim.simulator import TransitSimulator
 
 HYPERVOLUME_STRIDE = 10  # print every Nth generation
 
 
+from city.pipeline import build_pipeline as complete_pipeline, build_stop_od_matrix
+from city.experiments import choose_greedy
+from city.objectives import objective_values
+
+
 def build_pipeline():
-    """Regenerates the full pipeline through the candidate route pool,
-    the same way inspect_sim.py does."""
-    map_manager = MapManager()
-    world = World(map_manager)
-    world.generate()
-
-    population = world.population.data
-    obstacle = world.obstacle.data
-    world_size = population.shape[0]
-
-    population_generator = PopulationGenerator(
-        terrain_classes=world.terrain.data,
-        obstacle_mask=obstacle,
-        world_size=world_size,
-        seed=config.SEED,
-    )
-    population_generator.run()
-    starts = [(float(col), float(row)) for row, col in population_generator.centres]
-
-    segments = RoadNetworkGrower(population, obstacle, starts).grow()
-    graph = RoadGraphBuilder(segments).build()
-
-    connectors = connect_components(graph, obstacle)
-    graph = RoadGraphBuilder(segments + connectors).build()
-
-    loop_edges = close_loops(graph, obstacle)
-    graph = RoadGraphBuilder(segments + connectors + loop_edges).build()
-
-    stops = StopSelector(graph, population).select()
-
-    zones = ZoneMap.from_maps(world.population, world.obstacle)
-    dist = DistanceMatrix.from_graph(zones, graph)
-    demand = GravityModel.from_zones_and_distance(zones, dist)
-
-    stop_distances = build_stop_distance_matrix(graph, stops)
-    stop_demand = aggregate_stop_demand(zones, demand, stops)
-    clusters = DemandClusterer(stops, stop_distances, stop_demand).cluster()
-    routes = RoutePool(graph, clusters, stops).generate()
-
-    return stops, zones, demand, stop_distances, routes
-
-
-def build_stop_od_matrix(zones: ZoneMap, demand: GravityModel, stops: list) -> np.ndarray:
-    """Aggregates the zone-level O-D demand matrix onto stops (same as
-    inspect_sim.py's helper of the same name)."""
-    assignment = assign_zones_to_stops(zones, stops)
-    n_stops = len(stops)
-    flat_index = assignment[:, np.newaxis] * n_stops + assignment[np.newaxis, :]
-    stop_od = np.bincount(flat_index.ravel(), weights=demand.data.ravel(), minlength=n_stops * n_stops)
-    return stop_od.reshape(n_stops, n_stops)
+    p=complete_pipeline()
+    return p.stops,p.zones,p.demand,p.stop_distances,p.routes
 
 
 def select_routes_greedily(routes: list, stop_od: np.ndarray, count: int) -> list:
-    """Picks `count` routes ranked by the O-D demand each route could
-    directly serve on its own (same method inspect_sim.py uses for its
-    diagnostic route set) - the baseline the GA is compared against."""
-
-    def score(route) -> float:
-        idx = np.array(route.stops)
-        return float(stop_od[np.ix_(idx, idx)].sum())
-
-    ranked = sorted(routes, key=score, reverse=True)
-    return ranked[:count]
+    return [routes[i] for i in sorted(choose_greedy(routes,stop_od,count))]
 
 
 def evaluate_route_set(routes: list, stop_distances: np.ndarray, stop_od: np.ndarray) -> tuple[float, float, float]:
@@ -111,12 +45,7 @@ def evaluate_route_set(routes: list, stop_distances: np.ndarray, stop_od: np.nda
     that didn't come from the GA (the greedy baseline)."""
     frequencies = [config.GA_FIXED_FREQUENCY] * len(routes)
     result = TransitSimulator(routes, stop_distances, stop_od, frequencies).run()
-    user_cost = (
-        result.total_wait_time
-        + result.total_travel_time
-        + result.total_transfers * config.GA_TRANSFER_PENALTY_MINUTES
-    )
-    return user_cost, result.total_bus_distance, result.unserved_passengers
+    return objective_values(result)
 
 
 def main() -> None:
@@ -151,7 +80,7 @@ def main() -> None:
 
     print("-" * 60)
     print(
-        f"Exact hypervolume per generation (fraction of the normalised unit "
+        f"Archive hypervolume per generation (fraction of the normalised unit "
         f"cube, every {HYPERVOLUME_STRIDE}th, index 0 = initial population):"
     )
     for gen, hv in enumerate(result.hypervolume_history):
@@ -164,16 +93,16 @@ def main() -> None:
         still_rising = pct_change > 1.0
         print(
             f"  change over last {len(tail) - 1} generations: {pct_change:+.2f}% - "
-            f"{'STILL RISING (not converged, more generations may help)' if still_rising else 'flat/converged'}"
+            f"{'STILL RISING (not converged, more generations may help)' if still_rising else 'plateau or decline; convergence not established'}"
         )
     else:
         print("  not enough history to judge convergence")
 
     print("-" * 60)
     front = result.pareto_front
-    print(f"Final Pareto front size          : {len(front)}")
+    print(f"Cumulative nondominated archive size          : {len(front)}")
     objectives = np.array([obj for _, obj in front])
-    names = ["user cost (min)", "operator cost (cells)", "unserved passengers"]
+    names = ["user cost (min)", "operator cost (cells)", "incomplete transit passengers"]
     for i, name in enumerate(names):
         col = objectives[:, i]
         print(f"  {name:<24}: min={col.min():,.2f}  median={statistics.median(col):,.2f}  max={col.max():,.2f}")
@@ -186,7 +115,7 @@ def main() -> None:
     for label, (chromosome, obj) in (
         ("best user cost", best_user),
         ("best operator cost", best_operator),
-        ("best coverage (least unserved)", best_coverage),
+        ("highest completion (least incomplete)", best_coverage),
     ):
         print(
             f"  {label:<32}: user={obj[0]:,.2f}  operator={obj[1]:,.2f}  "

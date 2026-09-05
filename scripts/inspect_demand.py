@@ -29,39 +29,17 @@ import config
 from city.demand.distance_matrix import DistanceMatrix
 from city.demand.gravity_model import GravityModel
 from city.demand.zone_map import ZoneMap
-from city.generators.population_generator import PopulationGenerator
 from city.managers.map_manager import MapManager
 from city.models.world import World
-from city.roads.connector import connect_components
-from city.roads.graph_builder import RoadGraphBuilder
-from city.roads.loop_closer import close_loops
-from city.roads.segment_grower import RoadNetworkGrower
 
 SCALE_ZONE_SIZES = (4, 8, 16)
 
 
+from city.pipeline import build_roads
+
+
 def build_road_graph(world: World) -> nx.Graph:
-    """Same pipeline as inspect_roads.py: grow, connect, close loops."""
-    population = world.population.data
-    obstacle = world.obstacle.data
-
-    population_generator = PopulationGenerator(
-        terrain_classes=world.terrain.data,
-        obstacle_mask=world.obstacle.data,
-        world_size=population.shape[0],
-        seed=config.SEED,
-    )
-    population_generator.run()
-    starts = [(float(col), float(row)) for row, col in population_generator.centres]
-
-    segments = RoadNetworkGrower(population, obstacle, starts).grow()
-    graph = RoadGraphBuilder(segments).build()
-
-    connectors = connect_components(graph, obstacle)
-    graph = RoadGraphBuilder(segments + connectors).build()
-
-    loop_edges = close_loops(graph, obstacle)
-    return RoadGraphBuilder(segments + connectors + loop_edges).build()
+    return build_roads(world).graph
 
 
 def main() -> None:

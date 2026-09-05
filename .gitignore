@@ -5,11 +5,18 @@ __pycache__/
 
 # Reproducible generated output (run main.py / scripts to regenerate)
 output/
+results/
 
 # One-off scratch/testing scripts, not part of the pipeline
 aaaaaaa.py
 bbbbbbb.py
 Population_heat_map_testing.py
 
-# Private working notes, not meant for repo viewers
+# Local reports, examiner audits, explanatory notes and assistant guidance
 docs/
+claude.md
+.codex/
+.agents/
+
+# One-off report assembly tied to local audit results
+scripts/build_final_report.py

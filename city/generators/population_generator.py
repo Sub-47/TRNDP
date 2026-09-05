@@ -128,11 +128,9 @@ class PopulationGenerator:
         `subcentre_weight` for every other centre. Fully vectorized
         over the grid with NumPy broadcasting - no per-cell loop.
 
-        # TODO: this uses straight-line (Euclidean) distance as a
-        # deliberate simplification. Real density decays by travel
-        # distance along the road network, which does not exist yet;
-        # once road generation lands, this should switch to graph
-        # distance.
+        Spatial density uses Euclidean decay as an explicit generative assumption.
+        It precedes road generation; graph distances are used later for OD demand.
+
 
         Returns:
             A float64 density array, not yet scaled or normalized.

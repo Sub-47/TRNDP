@@ -21,62 +21,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 
 import config
-from city.demand.distance_matrix import DistanceMatrix
 from city.demand.gravity_model import GravityModel
 from city.demand.zone_map import ZoneMap
-from city.generators.population_generator import PopulationGenerator
-from city.managers.map_manager import MapManager
-from city.models.world import World
-from city.roads.connector import connect_components
-from city.roads.graph_builder import RoadGraphBuilder
-from city.roads.loop_closer import close_loops
-from city.roads.segment_grower import RoadNetworkGrower
-from city.roads.stop_selector import StopSelector
-from city.routes.cluster import (
-    DemandClusterer,
-    aggregate_stop_demand,
-    assign_zones_to_stops,
-    build_stop_distance_matrix,
-)
+from city.routes.cluster import DemandClusterer, assign_zones_to_stops, build_stop_distance_matrix
 from city.routes.route_pool import RoutePool
 
 
+from city.pipeline import build_pipeline as complete_pipeline, build_stop_od_matrix
+
+
 def build_pipeline():
-    """Regenerates the full pipeline up through demand, the same way
-    inspect_roads.py and test_demand.py do."""
-    map_manager = MapManager()
-    world = World(map_manager)
-    world.generate()
-
-    population = world.population.data
-    obstacle = world.obstacle.data
-    world_size = population.shape[0]
-
-    population_generator = PopulationGenerator(
-        terrain_classes=world.terrain.data,
-        obstacle_mask=obstacle,
-        world_size=world_size,
-        seed=config.SEED,
-    )
-    population_generator.run()
-    starts = [(float(col), float(row)) for row, col in population_generator.centres]
-
-    segments = RoadNetworkGrower(population, obstacle, starts).grow()
-    graph = RoadGraphBuilder(segments).build()
-
-    connectors = connect_components(graph, obstacle)
-    graph = RoadGraphBuilder(segments + connectors).build()
-
-    loop_edges = close_loops(graph, obstacle)
-    graph = RoadGraphBuilder(segments + connectors + loop_edges).build()
-
-    stops = StopSelector(graph, population).select()
-
-    zones = ZoneMap.from_maps(world.population, world.obstacle)
-    dist = DistanceMatrix.from_graph(zones, graph)
-    demand = GravityModel.from_zones_and_distance(zones, dist)
-
-    return graph, stops, zones, demand
+    p=complete_pipeline()
+    return p.graph,p.stops,p.zones,p.demand
 
 
 def _distribution(values: list[float]) -> tuple[float, float, float]:
@@ -143,7 +99,9 @@ def main() -> None:
     # --- Clustering ---------------------------------------------------
     t0 = time.perf_counter()
     stop_distances = build_stop_distance_matrix(graph, stops)
-    stop_demand = aggregate_stop_demand(zones, demand, stops)
+    od = build_stop_od_matrix(zones, demand, stops)
+    np.fill_diagonal(od, 0.)
+    stop_demand = od.sum(axis=0) + od.sum(axis=1)
     zone_assignment = assign_zones_to_stops(zones, stops)
 
     clusterer = DemandClusterer(stops, stop_distances, stop_demand)

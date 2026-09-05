@@ -48,7 +48,9 @@ def test_conservation_created_equals_served_plus_unserved_plus_onboard():
     )
 
 
-def test_wait_time_splits_conserve_and_stay_within_duration():
+def test_wait_time_splits_conserve_and_stay_within_duration(monkeypatch):
+    # Last scheduled departure at 120 is mid-journey at 130.
+    monkeypatch.setattr(config, "SIM_DURATION_MINUTES", 130.)
     # Heavy demand on a low frequency so all three outcomes (served,
     # unserved, still onboard) are non-trivially populated, exercising
     # the served/unserved wait split's proportional-withdrawal
@@ -131,9 +133,9 @@ def test_doubling_duration_roughly_doubles_demand_served(monkeypatch):
     # A throughput-limited scenario (heavy demand, low-ish frequency)
     # where only a modest fraction of demand is served in the base
     # window, so there's room for more service time to matter. Buses
-    # never retire once dispatched (per spec) and the fleet keeps
-    # growing over the run, so served-vs-duration isn't perfectly
-    # linear here - "roughly doubles" is checked with a generous
+    # run one scheduled direction then retire. End-of-window censoring
+    # means served-vs-duration is not perfectly linear.
+    # "Roughly doubles" is checked with a generous
     # tolerance band rather than an exact 2x.
     stop_distances, route = _single_route(spacing=10.0)
     demand = np.zeros((5, 5))

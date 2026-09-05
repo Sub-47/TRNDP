@@ -182,11 +182,8 @@ def test_elitism_best_objectives_never_worsen(tiny_ga_config):
 
 
 def test_hypervolume_never_decreases(tiny_ga_config):
-    # NSGA-II is elitist, so the first front's exact hypervolume can
-    # never shrink generation over generation - this is the exact
-    # invariant the old Monte Carlo estimator violated (sampling noise
-    # made the series go up and down, which is mathematically
-    # impossible for an elitist algorithm).
+    # A cumulative archive with fixed reference cannot lose dominated volume.
+    # Current-population HV has no such invariant under crowding truncation.
     pool = _tiny_pool()
     stop_distances = _linear_stops(8, 5.0)
     demand = _tiny_demand()

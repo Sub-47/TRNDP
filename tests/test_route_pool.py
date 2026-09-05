@@ -155,21 +155,16 @@ def test_every_route_is_a_valid_path_in_the_graph():
             assert nx.has_path(graph, stops[a], stops[b])
 
 
-def test_no_duplicate_stop_sequences_in_pool():
+def test_distinct_road_paths_with_same_stops_are_preserved():
     graph = _chain_graph_with_detour()
     stops, clusters = _chain_stops_and_clusters()
-
-    pool = RoutePool(graph, clusters, stops, routes_per_pair=5, min_stops=3, max_length=200.0)
+    pool = RoutePool(graph, clusters, stops, routes_per_pair=5, min_stops=3, max_length=200.)
     routes = pool.generate()
-
-    sequences = [tuple(route.stops) for route in routes]
-    assert len(sequences) == len(set(sequences))
-    # Every simple path here funnels through n2, so every one of the
-    # (up to 5) shortest paths collapses to the same [0, 1, 2] sequence -
-    # dedup must actually reject the repeats, not just coincidentally
-    # avoid producing any.
-    assert len(routes) == 1
-    assert pool.rejected_duplicate >= 1
+    paths=[tuple(r.road_path) for r in routes]
+    assert len(paths)==len(set(paths))==4
+    assert all(r.stops==[0,1,2] for r in routes)
+    for r in routes:
+        assert sum(r.leg_distances)==pytest.approx(r.length)
 
 
 def test_every_route_has_at_least_min_stops():

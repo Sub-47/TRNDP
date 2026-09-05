@@ -1,0 +1,18 @@
+{
+  "city_seed": 42,
+  "ga_seeds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "period": "BASE",
+  "overrides": {
+    "GA_POPULATION": 20,
+    "GA_GENERATIONS": 20,
+    "GA_ROUTES_PER_SOLUTION": 20,
+    "SIM_DURATION_MINUTES": 180.0,
+    "SIM_TIME_STEP_MINUTES": 0.5
+  }
+}

@@ -21,19 +21,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 
 import config
-from city.demand.distance_matrix import DistanceMatrix
-from city.demand.gravity_model import GravityModel
-from city.demand.zone_map import ZoneMap
-from city.generators.population_generator import PopulationGenerator
-from city.managers.map_manager import MapManager
-from city.models.world import World
-from city.roads.connector import connect_components
-from city.roads.graph_builder import RoadGraphBuilder
-from city.roads.loop_closer import close_loops
-from city.roads.segment_grower import RoadNetworkGrower
-from city.roads.stop_selector import StopSelector
-from city.routes.cluster import DemandClusterer, aggregate_stop_demand, assign_zones_to_stops, build_stop_distance_matrix
-from city.routes.route_pool import RoutePool
 from city.sim.simulator import TransitSimulator
 
 # Diagnostic-only choices (not generation parameters, so not in config.py):
@@ -47,73 +34,17 @@ OCCUPANCY_TRACE_FREQUENCY = 32.0  # buses/hour per route
 OCCUPANCY_TRACE_STRIDE = 20  # print every Nth step
 
 
+from city.pipeline import build_pipeline as complete_pipeline, build_stop_od_matrix
+from city.experiments import choose_greedy
+
+
 def build_pipeline():
-    """Regenerates the full pipeline through the candidate route pool,
-    the same way inspect_routes.py does."""
-    map_manager = MapManager()
-    world = World(map_manager)
-    world.generate()
-
-    population = world.population.data
-    obstacle = world.obstacle.data
-    world_size = population.shape[0]
-
-    population_generator = PopulationGenerator(
-        terrain_classes=world.terrain.data,
-        obstacle_mask=obstacle,
-        world_size=world_size,
-        seed=config.SEED,
-    )
-    population_generator.run()
-    starts = [(float(col), float(row)) for row, col in population_generator.centres]
-
-    segments = RoadNetworkGrower(population, obstacle, starts).grow()
-    graph = RoadGraphBuilder(segments).build()
-
-    connectors = connect_components(graph, obstacle)
-    graph = RoadGraphBuilder(segments + connectors).build()
-
-    loop_edges = close_loops(graph, obstacle)
-    graph = RoadGraphBuilder(segments + connectors + loop_edges).build()
-
-    stops = StopSelector(graph, population).select()
-
-    zones = ZoneMap.from_maps(world.population, world.obstacle)
-    dist = DistanceMatrix.from_graph(zones, graph)
-    demand = GravityModel.from_zones_and_distance(zones, dist)
-
-    stop_distances = build_stop_distance_matrix(graph, stops)
-    stop_demand = aggregate_stop_demand(zones, demand, stops)
-    clusters = DemandClusterer(stops, stop_distances, stop_demand).cluster()
-    routes = RoutePool(graph, clusters, stops).generate()
-
-    return stops, zones, demand, stop_distances, routes
-
-
-def build_stop_od_matrix(zones: ZoneMap, demand: GravityModel, stops: list) -> np.ndarray:
-    """Aggregates the zone-level O-D demand matrix onto stops, the same
-    nearest-stop assignment aggregate_stop_demand uses, but keeping the
-    full stop-to-stop O-D structure TransitSimulator needs instead of
-    collapsing it to a per-stop total."""
-    assignment = assign_zones_to_stops(zones, stops)
-    n_stops = len(stops)
-    flat_index = assignment[:, np.newaxis] * n_stops + assignment[np.newaxis, :]
-    stop_od = np.bincount(flat_index.ravel(), weights=demand.data.ravel(), minlength=n_stops * n_stops)
-    return stop_od.reshape(n_stops, n_stops)
+    p=complete_pipeline()
+    return p.stops,p.zones,p.demand,p.stop_distances,p.routes
 
 
 def select_routes_greedily(routes: list, stop_od: np.ndarray, count: int) -> list:
-    """Picks `count` routes from the pool, ranked by the O-D demand each
-    route could directly serve on its own (both endpoints among its own
-    stops) - the simplest reading of "chosen greedily by the demand they
-    serve"; it does not account for overlap between selected routes."""
-
-    def score(route) -> float:
-        idx = np.array(route.stops)
-        return float(stop_od[np.ix_(idx, idx)].sum())
-
-    ranked = sorted(routes, key=score, reverse=True)
-    return ranked[:count]
+    return [routes[i] for i in sorted(choose_greedy(routes,stop_od,count))]
 
 
 def reachability_audit(routes: list, stop_od: np.ndarray, max_transfers: int) -> dict:
@@ -134,6 +65,8 @@ def reachability_audit(routes: list, stop_od: np.ndarray, max_transfers: int) ->
         {"transfers": {0: pct, 1: pct, ..., max_transfers: pct},
          "unreachable": pct} - percentages of total O-D demand mass.
     """
+    stop_od = stop_od.copy()
+    np.fill_diagonal(stop_od,0.)
     n_routes = len(routes)
     n_stops = stop_od.shape[0]
     route_stops = [set(route.stops) for route in routes]
@@ -292,7 +225,9 @@ def main() -> None:
     runtime = time.perf_counter() - t0
 
     print("-" * 60)
-    print("SimResult:")
+    print("SimResult (transit counts exclude local/walking demand):")
+    print(f"  local/walking demand            : {result.local_or_walking_demand:.2f}")
+    print(f"  incomplete transit passengers   : {result.incomplete_passengers:.2f}")
     print(f"  total_wait_time                : {result.total_wait_time:.2f} passenger-min")
     print(f"  total_travel_time              : {result.total_travel_time:.2f} passenger-min")
     print(f"  total_transfers                : {result.total_transfers:.2f}")
@@ -316,14 +251,14 @@ def main() -> None:
     # (tracked separately in simulator.py) fixes that.
     mean_wait_per_served = result.served_wait_time / served if served > 0 else 0.0
     mean_wait_per_created = result.total_wait_time / created if created > 0 else 0.0
-    mean_transfers_per_served = result.total_transfers / served if served > 0 else 0.0
+    mean_transfers_per_served = result.served_transfers / served if served > 0 else 0.0
 
     print(f"  mean wait per SERVED passenger   : {mean_wait_per_served:.2f} min")
     print(f"  mean wait per CREATED passenger  : {mean_wait_per_created:.2f} min")
     print(f"  mean transfers per served pax    : {mean_transfers_per_served:.3f}")
 
     pct_served = 100.0 * served / created if created > 0 else 0.0
-    print(f"  percentage of demand served      : {pct_served:.2f}%")
+    print(f"  percentage of transit demand served      : {pct_served:.2f}%")
 
     # Sanity check: no passenger-mass, however it ends up, can have
     # waited longer than the simulation actually ran. A violation here
